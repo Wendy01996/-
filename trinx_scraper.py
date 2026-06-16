@@ -8,6 +8,7 @@ TRINX 千里达 新闻爬虫脚本
 import os
 import json
 import smtplib
+import re
 from datetime import datetime, timezone, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -49,6 +50,9 @@ RSS_SOURCES = [
     }
 ]
 
+# 需要过滤的敏感词
+BLOCKED_KEYWORDS = ["virus", "crack", "hack", "malware", "porn", "sex"]
+
 
 class TrinxScraper:
     """TRINX 千里达 信息爬虫"""
@@ -56,6 +60,27 @@ class TrinxScraper:
     def __init__(self):
         self.articles = []
         self.error_log = []
+    
+    def clean_text(self, text: str) -> str:
+        """清理和规范化文本"""
+        if not text:
+            return ""
+        
+        # 移除 HTML 标签
+        text = re.sub(r'<[^>]+>', '', text)
+        # 移除特殊字符和控制符
+        text = re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]', '', text)
+        # 规范化空格
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+    
+    def is_safe_content(self, title: str, summary: str) -> bool:
+        """检查内容是否安全（不包含敏感词）"""
+        content = (title + " " + summary).lower()
+        for keyword in BLOCKED_KEYWORDS:
+            if keyword in content:
+                return False
+        return True
         
     def scrape_google_news(self) -> List[Dict]:
         """从 Google News 爬取数据"""
@@ -79,13 +104,20 @@ class TrinxScraper:
                 if feed.entries:
                     print(f"  找到 {len(feed.entries)} 条结果")
                     for entry in feed.entries[:10]:  # 限制每个关键词 10 条
+                        title = self.clean_text(entry.get("title", "无标题"))
+                        summary = self.clean_text(entry.get("summary", "")[:200])
+                        
+                        # 检查内容安全性
+                        if not self.is_safe_content(title, summary):
+                            continue
+                        
                         article = {
-                            "title": entry.get("title", "无标题"),
+                            "title": title,
                             "link": entry.get("link", ""),
                             "source": "Google News",
                             "keyword": keyword,
                             "published": entry.get("published", ""),
-                            "summary": entry.get("summary", "")[:200]  # 截断摘要
+                            "summary": summary
                         }
                         articles.append(article)
                 else:
@@ -113,17 +145,21 @@ class TrinxScraper:
                 if feed.entries:
                     for entry in feed.entries[:5]:  # 每个源限制 5 条
                         # 检查是否包含关键词
-                        title = entry.get("title", "").lower()
-                        summary = entry.get("summary", "").lower()
+                        title = self.clean_text(entry.get("title", "").lower())
+                        summary = self.clean_text(entry.get("summary", "").lower())
+                        
+                        # 检查内容安全性
+                        if not self.is_safe_content(title, summary):
+                            continue
                         
                         if any(kw.lower() in title or kw.lower() in summary for kw in KEYWORDS):
                             article = {
-                                "title": entry.get("title", "无标题"),
+                                "title": self.clean_text(entry.get("title", "无标题")),
                                 "link": entry.get("link", ""),
                                 "source": source['name'],
                                 "keyword": next((kw for kw in KEYWORDS if kw.lower() in title or kw.lower() in summary), ""),
                                 "published": entry.get("published", ""),
-                                "summary": entry.get("summary", "")[:200]
+                                "summary": self.clean_text(entry.get("summary", "")[:200])
                             }
                             articles.append(article)
                             print(f"    ✓ {article['title'][:60]}")
@@ -261,7 +297,7 @@ class EmailSender:
             
             # 创建邮件
             message = MIMEMultipart("alternative")
-            message["Subject"] = f"🏍️ TRINX 千里达 日报 - {datetime.now().strftime('%Y年%m月%d日')}"
+            message["Subject"] = f"TRINX 千里达 日报 - {datetime.now().strftime('%Y年%m月%d日')}"
             message["From"] = self.sender_email
             message["To"] = recipient_email
             
